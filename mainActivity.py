@@ -3,18 +3,19 @@ import scipy as sp
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def matriz (n):
+def matriz ():
     array_individuo = []
-    for i in range(1,6):
-        df = pd.read_csv(f"Part 0/part{n}dev{i}.csv")
-        array_individuo.append (df.values)
-    matriz = np.vstack(array_individuo) 
+    for part in range(0, 15):
+        for device in range(1,6):
+            df = pd.read_csv(f"Part {part}/part{part}dev{device}.csv")
+            df["Part"] = int(part+1)
+            array_individuo.append (df.values)
+        matriz = np.vstack(array_individuo) 
     return matriz
 
-dados = matriz (0)
+dados = matriz ()
+print(dados)
 print(dados.shape)
-print (dados.shape)
-
 atividades = []
 for n in dados:
     valor = n[11]
@@ -26,10 +27,7 @@ num_atividades = len (atividades)
 print (num_atividades)
 
 
-contagem = np.zeros ([16,1])
-for i in range (len(dados)):
-    atividade = int(dados [i][11])
-    contagem [atividade - 1] += 1
+
 
 
 
