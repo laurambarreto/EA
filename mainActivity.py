@@ -2,6 +2,7 @@ import numpy as np
 import scipy as sp
 import pandas as pd
 import matplotlib.pyplot as plt
+import math
 
 def matriz ():
     array_individuo = []
@@ -14,7 +15,6 @@ def matriz ():
     return matriz
 
 dados = matriz ()
-print(dados)
 print(dados.shape)
 atividades = []
 for n in dados:
@@ -27,7 +27,31 @@ num_atividades = len (atividades)
 print (num_atividades)
 
 
+contagem = np.zeros ([16,1])
+for i in range (len(dados)):
+    atividade = int(dados [i][11])
+    contagem [atividade - 1] += 1
 
 
+def modulo ():
+    novas_linhas = []
+    for i in range (dados.shape [0]):
+        modulo_acc = math.sqrt (int (dados[i][1])**2 + int (dados[i][2])**2 + int (dados[i][3])**2)
+        modulo_gyr = math.sqrt (int (dados[i][4])**2 + int (dados[i][5])**2 + int (dados[i][6])**2)
+        modulo_mag = math.sqrt (int (dados[i][7])**2 + int (dados[i][8])**2 + int (dados[i][9])**2)
+        # Adicionar os módulos no final da linha
+        nova_linha = np.append(dados[i], [modulo_acc, modulo_gyr, modulo_mag])
+        novas_linhas.append(nova_linha)
+
+    # Converter a lista de linhas de volta para array numpy
+    return np.array(novas_linhas)
 
 
+dados = modulo ()
+print (dados [0][13])
+print (dados [0][14])
+print (dados [0][15])
+
+print (dados [560][13])
+print (dados [560][14])
+print (dados [560][15])
