@@ -13,7 +13,7 @@ def matriz (n):
 
 dados = matriz (0)
 print(dados.shape)
-print (dados)
+print (dados.shape)
 
 atividades = []
 for n in dados:
