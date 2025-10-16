@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import math
 
+## EXERCÍCIO ...
 def matriz ():
     array_individuo = []
     for part in range(0, 15):
@@ -55,3 +56,13 @@ print (dados [0][15])
 print (dados [560][13])
 print (dados [560][14])
 print (dados [560][15])
+
+def boxplot (dados):
+    Acc = dados [::13]
+    Gyr = dados [::14]
+    Mag = dados [::15]
+    plt.figure (1)
+    plt.boxplot (Acc, labels = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16])
+    plt.show ()
+
+boxplot (dados)
