@@ -7,6 +7,11 @@ from sklearn.cluster import KMeans
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.colors as mcolors
 from sklearn.cluster import DBSCAN
+import seaborn as sns
+from scipy.stats import kstest, zscore
+from scipy.stats import kruskal
+from scipy.stats import ranksums
+from matplotlib.colors import LinearSegmentedColormap
 
 ## EXERCÍCIO ...
 ## EXERCÍCIO ...
@@ -56,7 +61,6 @@ def boxplots():
         plt.suptitle(f'Device {device} - Boxplots por Módulos e Atividades', fontsize = 14, fontweight = 'bold')
 
         # Para cada um dos 3 módulos
-        for i, (nome_modulo, col_modulo) in enumerate(zip(nomes_modulos, colunas_modulos), start = 1):
         for i, (nome_modulo, col_modulo) in enumerate(zip(nomes_modulos, colunas_modulos), start = 1):
             # Criar listas de valores por atividade (para este módulo)
             valores_boxplot = [device_data[device_data[:, 11] == a, col_modulo] for a in atividades]
@@ -170,7 +174,6 @@ def plot_outliers_porModulo_eAtividade_numDevice(k):
         plt.suptitle(f'Device {device_id} - Outliers (Z-score > {k})', fontsize = 14, fontweight = 'bold')
 
         # Para cada um dos 3 módulos
-        for subplot_idx, (nome_modulo, col_modulo) in enumerate(zip(nomes_modulos, colunas_modulos), start = 1):
         for subplot_idx, (nome_modulo, col_modulo) in enumerate(zip(nomes_modulos, colunas_modulos), start = 1):
             plt.subplot(1, 3, subplot_idx)
 
@@ -435,7 +438,7 @@ def dbscan_outliers_3D(device_id, eps=5, min_samples=10):
     plt.show()
 
 #dbscan_outliers_3D(device_id = 2, activity = 2, eps = 0.5, min_samples = 5)
-dbscan_outliers_3D(device_id = 2, eps = 0.5, min_samples = 5)
+#dbscan_outliers_3D(device_id = 2, eps = 0.5, min_samples = 5)
 
 
 def kmeans_outliers_3D_apenasPorDevice(device_id, n_clusters):
@@ -530,7 +533,7 @@ def kmeans_outliers_3D_apenasPorDevice(device_id, n_clusters):
     plt.tight_layout()
     plt.show()
 
-kmeans_outliers_3D_apenasPorDevice(device_id = 2, n_clusters = 45)
+#kmeans_outliers_3D_apenasPorDevice(device_id = 2, n_clusters = 45)
 
 '''
 kmeans_outliers_3D_apenasPorDevice(1, 6)
@@ -539,5 +542,119 @@ kmeans_outliers_3D_apenasPorDevice(4, 6)
 kmeans_outliers_3D_apenasPorDevice(5, 6)
 '''
 
+def heatmap_normalidade_por_atividade(device_id):
+    # Filtrar dados do device
+    device_data = dados[dados[:, 0] == device_id]
+    
+    # Extrair colunas relevantes
+    atividades = device_data[:, 11].astype(int)
+    mod_acc = device_data[:, 13].astype(float)
+    mod_gyr = device_data[:, 14].astype(float)
+    mod_mag = device_data[:, 15].astype(float)
 
+    # Lista de módulos e nomes
+    mods = [mod_acc, mod_gyr, mod_mag]
+    nomes = ['ACC', 'GYR', 'MAG']
+    atividades_unicas = np.unique(atividades)
 
+    # Matriz de p-values [módulo, atividade]
+    p_matrix = np.zeros((3, len(atividades_unicas)))
+
+    for i, mod in enumerate(mods):
+        for j, act in enumerate(atividades_unicas):
+            dados_atividade = mod[atividades == act]
+            # Normalizar com z-score antes do teste
+            dados_norm = zscore(dados_atividade)
+            stat, p_value = kstest(dados_norm, 'norm')
+            p_matrix[i, j] = p_value
+
+    # Criar heatmap
+    plt.figure(figsize = (12, 4))
+    sns.heatmap(
+        p_matrix, annot = True, fmt = ".3f",
+        xticklabels = atividades_unicas, yticklabels = nomes,
+        cmap = "coolwarm", cbar_kws={'label': 'p-value (Kolmogorov-Smirnov)'},
+        vmin = 0, vmax = 1,
+        linewidths = 0.4, linecolor = 'black'
+    )
+    plt.axhline(1, color = 'black', linewidth = 0.5)
+    plt.title(f'Normalidade (KS-Test) — Device {device_id}')
+    plt.xlabel('Atividade')
+    plt.ylabel('Módulo')
+    plt.tight_layout()
+    plt.show()
+
+#heatmap_normalidade_por_atividade(device_id = 2)
+
+# ------------ 4.1 ------------ #
+def testar_significancia_kruskal(device_id):
+    # Filtrar apenas os dados do device
+    device_data = dados[dados[:, 0] == device_id]
+
+    # Extrair colunas relevantes
+    atividades = device_data[:, 11].astype(int)
+    mod_acc = device_data[:, 13].astype(float)
+    mod_gyr = device_data[:, 14].astype(float)
+    mod_mag = device_data[:, 15].astype(float)
+
+    # Nomes e módulos
+    mods = [mod_acc, mod_gyr, mod_mag]
+    nomes = ['ACC', 'GYR', 'MAG']
+    atividades_unicas = np.unique(atividades)
+
+    # Guardar p-values
+    p_vals = []
+
+    print(f"\nTeste de Kruskal-Wallis para aferir se as médias das atividade nos módulos são estatisticamente significantes — Device {device_id}")
+    print("---------------------------------------------------")
+
+    for nome, mod in zip(nomes, mods):
+        # Criar lista com os valores do módulo por atividade
+        grupos = [mod[atividades == act] for act in atividades_unicas]
+
+        # Aplicar o teste de Kruskal–Wallis
+        stat, p_value = kruskal(*grupos)
+        p_vals.append(p_value)
+
+        # Imprimir resultado e interpretação
+        interpretacao = "Diferenças significativas" if p_value < 0.05 else "Sem diferenças significativas"
+        print(f"{nome}: H = {stat:.3f}, p = {p_value:.5f} → {interpretacao}")
+
+#testar_significancia_kruskal(device_id = 1)
+
+def heatmaps_modules_nonparam(dev_id):
+    cols = [13, 14, 15]
+    module_names = ["Acceleration", "Gyroscope", "Magnetometer"]
+
+    # Sempre todas as 16 atividades
+    atividades_unicas = np.arange(1,17)
+    n_activities = len(atividades_unicas)
+
+    for col, mod_name in zip(cols, module_names):
+        activities_groups = [dados[(dados[:,11] == act) & (dados[:,0] == dev_id), col] for act in atividades_unicas]
+
+        p_values = np.full((n_activities, n_activities), np.nan)
+
+        for i in range(n_activities):
+            for j in range(i+1, n_activities):
+                if len(activities_groups[i]) > 0 and len(activities_groups[j]) > 0:
+                    p = ranksums(activities_groups[i], activities_groups[j]).pvalue
+                    p_values[i,j] = p
+                    p_values[j,i] = p  # simetria
+
+        df = pd.DataFrame(p_values, index = atividades_unicas.astype(int), columns = atividades_unicas.astype(int))
+
+        plt.figure(figsize = (12,10))
+        ax = sns.heatmap(df, annot = True, fmt = ".3f", linewidths = 0.5,
+                         cmap = "coolwarm", vmin = 0, vmax = 1, cbar_kws = {'label': 'p-value'})
+
+        # Adicionar contorno às células com p > 0.05
+        for i in range(n_activities):
+            for j in range(n_activities):
+                if not np.isnan(p_values[i,j]) and p_values[i,j] > 0.05:
+                    ax.add_patch(plt.Rectangle((j, i), 1, 1, fill = False, edgecolor = 'black', lw = 1))
+
+        plt.title(f"Non-parametric p-values - {mod_name}")
+        plt.show()
+
+heatmaps_modules_nonparam(dev_id = 2)
