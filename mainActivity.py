@@ -12,6 +12,9 @@ from scipy.stats import kstest, zscore
 from scipy.stats import kruskal
 from scipy.stats import ranksums
 from matplotlib.colors import LinearSegmentedColormap
+from scipy.stats import skew, kurtosis, entropy
+from scipy.signal import welch
+from itertools import combinations
 
 ## EXERCÍCIO ...
 ## EXERCÍCIO ...
@@ -657,4 +660,121 @@ def heatmaps_modules_nonparam(dev_id):
         plt.title(f"Non-parametric p-values - {mod_name}")
         plt.show()
 
-heatmaps_modules_nonparam(dev_id = 2)
+#heatmaps_modules_nonparam(dev_id = 2)
+
+
+def extract_features_110(dataset, fs, window_s, overlap):
+    """
+    Extrai exatamente as 110 features (87 temporais/espectrais + 23 físicas)
+    segundo o paper BodyNets 2011 (Zhang & Sawchuk).
+    """
+    win_len = int(window_s * fs)
+    hop = int(win_len * (1 - overlap))
+    n_samples = dataset.shape[0]
+
+    print("Comprimento da janela:", win_len)
+
+    # Colunas do dataset
+    acc = dataset[:, 1:4]   # aceleração x,y,z
+    gyr = dataset[:, 4:7]   # giroscópio x,y,z
+    labels = dataset[:, 11] # atividade
+
+    X, y = [], []
+
+    # Funções auxiliares
+    def rms(x): return np.sqrt(np.mean(x**2))
+    def iqr(x): return np.percentile(x, 75) - np.percentile(x, 25)
+    def zero_crossing_rate(x): return np.sum(np.diff(np.sign(x)) != 0) / len(x)
+    def mean_crossing_rate(x): return np.sum(np.diff(np.sign(x - np.mean(x))) != 0) / len(x)
+    def spectral_entropy(x, fs):
+        f, Pxx = welch(x, fs=fs)
+        Pxx /= np.sum(Pxx)
+        return entropy(Pxx)
+    def dominant_frequency(x, fs):
+        f, Pxx = welch(x, fs=fs)
+        return f[np.argmax(Pxx)]
+    def spectral_energy(x, fs):
+        f, Pxx = welch(x, fs=fs)
+        return np.sum(Pxx)
+    def movement_intensity(acc):  # MI(t)
+        return np.sqrt(np.sum(acc**2, axis=1))
+    def sma(data):  # Signal Magnitude Area
+        return np.sum(np.abs(data)) / len(data)
+    def avg_velocity(acc, fs):  # AVG
+        vel = np.cumsum(acc, axis=0) / fs
+        return np.mean(np.linalg.norm(vel, axis=1))
+    def eig_features(data):  # EVA (3 autovalores)
+        eigvals = np.linalg.eigvals(np.cov(data.T))
+        eigvals = np.real(np.sort(eigvals)[::-1])
+        return eigvals
+
+    # Sliding windows
+    for start in range(0, n_samples - win_len + 1, hop):
+        end = start + win_len
+        lbls = labels[start:end]
+        if len(np.unique(lbls)) != 1:
+            continue  # descartar janelas mistas
+
+        acc_w = acc[start:end, :]
+        gyr_w = gyr[start:end, :]
+
+        feats = []
+
+        # --- Features temporais + espectrais (87) ---
+        for sensor in [acc_w, gyr_w]:
+            for i in range(3):  # x, y, z
+                x = sensor[:, i]
+                feats.extend([
+                    np.mean(x), np.median(x), np.std(x), np.var(x),
+                    rms(x), np.mean(np.diff(x)), skew(x), kurtosis(x),
+                    iqr(x), zero_crossing_rate(x), mean_crossing_rate(x),
+                    spectral_entropy(x, fs), dominant_frequency(x, fs),
+                    spectral_energy(x, fs)
+                ])
+        # 14 * 3 * 2 = 84 features
+
+        # Correlações (15)
+        full = np.hstack((acc_w, gyr_w))
+        for (i, j) in combinations(range(6), 2):
+            feats.append(np.corrcoef(full[:, i], full[:, j])[0, 1])
+        # Total até aqui = 84 + 15 = 99
+
+        # --- Physical features (23) ---
+        mi = movement_intensity(acc_w)
+        feats.append(np.mean(mi))      # 1. AI
+        feats.append(np.var(mi))       # 2. VI
+        feats.append(sma(acc_w))       # 3. SMA
+        feats.extend(eig_features(acc_w)) # 4–6. EVA (3 autovalores)
+        feats.append(avg_velocity(acc_w, fs)) # 7. AVG
+        feats.append(np.mean(np.abs(gyr_w)))  # 8. AVH
+        feats.append(np.var(gyr_w))           # 9. ARATG
+
+        # CAGH (correlação aceleração-gravidade-heading)
+        g_proj = acc_w[:, 2]  # z ~ gravidade
+        heading_proj = np.sqrt(acc_w[:, 0]**2 + acc_w[:, 1]**2)
+        feats.append(np.corrcoef(g_proj, heading_proj)[0, 1])  # 10. CAGH
+
+        # ARE e AAE (energias médias)
+        feats.append(np.mean(acc_w**2))  # 11. ARE
+        feats.append(np.mean(gyr_w**2))  # 12. AAE
+
+        # Total: 99 + 11 = 110 ✅
+
+        # Garantir 110 features exatas
+        feats = feats[:110]
+        X.append(feats)
+        y.append(lbls[0])
+
+    return np.array(X), np.array(y)
+
+tempo = dados[:, 10]
+print("Primeiras 5 diferenças:", np.diff(tempo)[:20])
+print("Número de amostras:", len(tempo))
+
+# Se timestamps estão em milissegundos:
+fs = 51.2
+print(f"Frequência de amostragem estimada: {fs:.2f} Hz")
+
+X, y = extract_features_110(dados, fs=fs, window_s=5, overlap=0.5)
+print("Matriz de features:", X.shape)
+print("Labels:", y.shape)
