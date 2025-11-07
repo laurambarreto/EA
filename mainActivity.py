@@ -15,9 +15,13 @@ from matplotlib.colors import LinearSegmentedColormap
 from scipy.stats import skew, kurtosis, entropy
 from scipy.signal import welch
 from itertools import combinations
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import f_classif
+from skrebate import ReliefF
+from sklearn.preprocessing import StandardScaler
 
-## EXERCÍCIO ...
-## EXERCÍCIO ...
+## ------------ EXERCÍCIO 2 ------------ ##
+## -- DADOS DE TODOS OS PARTICIPANTES NUMA MATRIZ -- ##
 def matriz ():
     array_individuo = []
     for part in range(0, 15):
@@ -30,6 +34,7 @@ def matriz ():
 
 dados = matriz ()
 
+# Verificar a quantidade de atividades distintas
 atividades = np.unique(dados[:, 11].astype(int))
 print(atividades)
 
@@ -678,8 +683,37 @@ def extract_features_110(dataset, fs, window_s, overlap):
     acc = dataset[:, 1:4]   # aceleração x,y,z
     gyr = dataset[:, 4:7]   # giroscópio x,y,z
     labels = dataset[:, 11] # atividade
+    timestamp = dataset[:, 10] # timestamp
 
     X, y = [], []
+    feature_names = []
+
+    # -- NOMES DAS FEATURES -- #
+    base_feats = [
+        "mean", "median", "std", "var", "rms", "mean_diff", "skew", "kurtosis",
+        "iqr", "zero_cross_rate", "mean_cross_rate", "spec_entropy",
+        "dom_freq", "spec_energy"
+    ]
+    axes = ["x", "y", "z"]
+    sensors = ["acc", "gyr"]
+
+    # Criar nomes automáticos das primeiras 84 features (14*3*2)
+    for s in sensors:
+        for ax in axes:
+            for f in base_feats:
+                feature_names.append(f"{s}_{ax}_{f}")
+
+    # Correlações 
+    corr_pairs = list(combinations(["acc_x", "acc_y", "acc_z", "gyr_x", "gyr_y", "gyr_z"], 2))
+    feature_names.extend([f"corr_{a}_{b}" for (a, b) in corr_pairs])
+
+    # Features físicas 
+    feature_names.extend([
+        "AI_mean", "VI_var", "SMA",
+        "EVA1", "EVA2",
+        "AVG", "AVH", "ARATG",
+        "CAGH", "ARE", "AAE"
+    ])
 
     # Funções auxiliares
     def rms(x): return np.sqrt(np.mean(x**2))
@@ -703,22 +737,32 @@ def extract_features_110(dataset, fs, window_s, overlap):
     def avg_velocity(acc, fs):  # AVG
         vel = np.cumsum(acc, axis=0) / fs
         return np.mean(np.linalg.norm(vel, axis=1))
-    def eig_features(data):  # EVA (3 autovalores)
+    def eig_features(data):  # EVA (2 autovalores)
         eigvals = np.linalg.eigvals(np.cov(data.T))
         eigvals = np.real(np.sort(eigvals)[::-1])
-        return eigvals
+        return eigvals[:2]
 
     # Sliding windows
     for start in range(0, n_samples - win_len + 1, hop):
         end = start + win_len
         lbls = labels[start:end]
+        timestamp_acc = timestamp[start:end]
+
         if len(np.unique(lbls)) != 1:
             continue  # descartar janelas mistas
+
+        if len(lbls)<10:
+            continue  # descartar janelas muito pequenas
 
         acc_w = acc[start:end, :]
         gyr_w = gyr[start:end, :]
 
         feats = []
+
+        # Armazenar dados de aceleração para atividades 1 a 7
+        dados_acc = []
+        if lbls[0] <= 7:
+            dados_acc = np.hstack((acc_w, timestamp_acc.reshape(-1,1), lbls.reshape(-1,1)))
 
         # --- Features temporais + espectrais (87) ---
         for sensor in [acc_w, gyr_w]:
@@ -739,42 +783,229 @@ def extract_features_110(dataset, fs, window_s, overlap):
             feats.append(np.corrcoef(full[:, i], full[:, j])[0, 1])
         # Total até aqui = 84 + 15 = 99
 
-        # --- Physical features (23) ---
+        # --- Physical features (11) ---
         mi = movement_intensity(acc_w)
         feats.append(np.mean(mi))      # 1. AI
         feats.append(np.var(mi))       # 2. VI
         feats.append(sma(acc_w))       # 3. SMA
-        feats.extend(eig_features(acc_w)) # 4–6. EVA (3 autovalores)
-        feats.append(avg_velocity(acc_w, fs)) # 7. AVG
-        feats.append(np.mean(np.abs(gyr_w)))  # 8. AVH
-        feats.append(np.var(gyr_w))           # 9. ARATG
+        feats.extend(eig_features(acc_w)) # 4–5. EVA (2 autovalores)
+        feats.append(avg_velocity(acc_w, fs)) # 6. AVG
+        feats.append(np.mean(np.abs(gyr_w)))  # 7. AVH
+        feats.append(np.var(gyr_w))           # 8. ARATG
 
         # CAGH (correlação aceleração-gravidade-heading)
         g_proj = acc_w[:, 2]  # z ~ gravidade
         heading_proj = np.sqrt(acc_w[:, 0]**2 + acc_w[:, 1]**2)
-        feats.append(np.corrcoef(g_proj, heading_proj)[0, 1])  # 10. CAGH
+        feats.append(np.corrcoef(g_proj, heading_proj)[0, 1])  # 9. CAGH
 
         # ARE e AAE (energias médias)
-        feats.append(np.mean(acc_w**2))  # 11. ARE
-        feats.append(np.mean(gyr_w**2))  # 12. AAE
+        feats.append(np.mean(acc_w**2))  # 10. ARE
+        feats.append(np.mean(gyr_w**2))  # 11. AAE
 
-        # Total: 99 + 11 = 110 ✅
+        # Total: 99 + 11 = 110 
 
-        # Garantir 110 features exatas
-        feats = feats[:110]
         X.append(feats)
         y.append(lbls[0])
 
-    return np.array(X), np.array(y)
+    return np.array(X), np.array(y), feature_names, dados_acc
 
-tempo = dados[:, 10]
-print("Primeiras 5 diferenças:", np.diff(tempo)[:20])
-print("Número de amostras:", len(tempo))
-
-# Se timestamps estão em milissegundos:
+# Frequência de amostragem
 fs = 51.2
-print(f"Frequência de amostragem estimada: {fs:.2f} Hz")
+X_total, y_total = [], []
+X_total_partB, y_total_partB = [], []
+dados_acc_total = []
 
-X, y = extract_features_110(dados, fs=fs, window_s=5, overlap=0.5)
-print("Matriz de features:", X.shape)
-print("Labels:", y.shape)
+# Extração das 110 features para cada participante
+for id_part in np.unique(dados[:, 12]):  # Todos os participantes
+    dados_p = dados[dados[:, 12] == id_part]
+    X_p, y_p, feature_names, dados_acc = extract_features_110(dados_p, fs, window_s = 5, overlap = 0.5)
+    print(f"Matriz de features do participante {id_part}:", X_p.shape)
+    print("Labels:", y_p.shape)
+    print("features: ", len(feature_names))
+    X_total.append(X_p)
+    y_total.append(y_p)
+
+    # Apenas atividades de 1 a 7 (Parte B)
+    indices_atividade = [1, 2, 3, 4, 5, 6, 7]
+    indices = np.where(np.isin(y_p, indices_atividade))[0]
+    X_total_partB.append(X_p[indices])
+    y_total_partB.append(y_p[indices])
+
+    dados_acc_total.append(dados_acc)
+
+X_total = np.vstack(X_total)[:, :-1]  # Excluir a última coluna (ID participante) para o PCA, relief e fisher
+y_total = np.hstack(y_total)
+print("Matriz de features Final:", X_total.shape)
+print("Labels Finais:", y_total.shape)
+
+# Matrizes para a Parte B (participantes 1 a 7)
+X_total_partB = np.vstack(X_total_partB)
+y_total_partB = np.hstack(y_total_partB)
+
+# criar um csv com timestamp, acc_x, acc_y, acc_z, timestamp, activity
+dados_acc_total = np.vstack(dados_acc_total)
+np.savetxt("dados_acc.csv", dados_acc_total, delimiter = ",")
+
+## ------------ EXERCÍCIO 4.3 ------------ ##
+## -- PCA PARA REDUZIR A DIMENSIONALIDADE -- ##
+def aplicar_pca(feature_set, n_components = None):
+
+    # Normalizar as features (Z-score)
+    scaler = StandardScaler()
+    feature_set_norm = scaler.fit_transform(feature_set)
+
+    # Aplicar PCA
+    pca = PCA(n_components = n_components)
+    pca_features = pca.fit_transform(feature_set_norm)
+
+    # Mostrar resultados
+    print("\n--- RESULTADOS DO PCA ---")
+    print("Variância explicada por cada componente:")
+    print(pca.explained_variance_ratio_)
+
+    # Gráfico da variância explicada acumulada
+    plt.figure(figsize = (7,4))
+    plt.plot(range(1, len(pca.explained_variance_ratio_) + 1), np.cumsum(pca.explained_variance_ratio_)*100, marker = 'o')
+
+    # Linha horizontal nos 75%
+    plt.axhline(y = 75, color = 'red', linestyle = '--', linewidth = 2)
+    
+    # Texto acima da linha
+    plt.text(
+        x = 37,# Posição x do texto 
+        y = 75 + 2, # Um pouco acima da linha
+        s = "75 %", 
+        color = "red",
+        fontsize = 12,
+        fontweight = 'bold'
+    )
+
+    plt.xlabel('Número de Componentes')
+    plt.ylabel('Variância Explicada Acumulada')
+    plt.title('Análise de Componentes Principais (PCA)', fontsize = 22, fontweight = 'bold', fontname = 'Trebuchet MS', color = '#c00000')
+    plt.grid(True)
+    plt.xlim (0,40) # x entre [0,40]
+    plt.show()
+
+    return pca_features, pca, scaler
+
+## ------------ EXERCÍCIO 4.4 ------------ ##
+# Aplicar PCA (mantendo todas as componentes)
+pca_features, pca, scaler = aplicar_pca(X_total)
+
+# Ver quantas componentes são necessárias para explicar 75% da variância
+variancia_acumulada = np.cumsum(pca.explained_variance_ratio_)
+dimensoes_75 = np.argmax(variancia_acumulada >= 0.75) + 1
+print(f"Número mínimo de componentes para explicar 75% da variância: {dimensoes_75}")
+
+## ------------ EXERCÍCIO 4.4.1 ------------ ##
+def exemplo_pca_instante(feature_set, scaler, pca, idx_exemplo = 0):
+    """
+    Obtém o vetor PCA completo de um instante específico (todas as componentes).
+    Retorna:
+        -> Vetor projetado no espaço PCA (todas as componentes)
+    """
+
+    # Obter o vetor original da amostra escolhida
+    x_original = feature_set[idx_exemplo, :].reshape(1, -1)
+
+    # Normalizar
+    x_norm = scaler.transform(x_original)
+
+    # Projetar no espaço PCA completo
+    pca_features = x_norm @ pca.components_.T
+
+    # Mostrar resultados
+    print(f"\n--- Exemplo PCA Completo (instante {idx_exemplo}) ---")
+    print(f"Vetor PCA (todas as componentes, dimensão {pca_features.shape[1]}):")
+    print(pca_features)
+
+    return pca_features
+
+exemplo_pca_instante(pca_features, scaler, pca, idx_exemplo = 0)
+
+## ------------ EXERCÍCIO 4.5 ------------ ##
+def selecionar_features_fisher_reliefF(X, y, feature_names, k = 10):
+    """
+    Aplica Fisher Score e ReliefF para selecionar as 10 melhores features.
+    """
+
+    # Normalizar os dados
+    scaler = StandardScaler()
+    X_norm = scaler.fit_transform(X)
+
+    # --- Fisher Score --- #
+    F_values, _ = f_classif(X_norm, y)
+    idx_fisher = np.argsort(F_values)[::-1][:k]
+
+    # --- ReliefF --- #
+    fs = ReliefF(n_neighbors = 10, n_features_to_select = k, n_jobs = -1) # Paralelizado
+    fs.fit(X_norm, y)
+    relief_scores = fs.feature_importances_
+    idx_relief = np.argsort(relief_scores)[::-1][:k]
+
+    # ---- Mostrar resultados ----
+    print("\nTop Features segundo Fisher Score:")
+    for i, idx in enumerate(idx_fisher):
+        print(f"  {i+1:02d}. {feature_names[idx]} — Score = {F_values[idx]:.4f}")
+
+    print("\nTop Features segundo ReliefF:")
+    for i, idx in enumerate(idx_relief):
+        print(f"  {i+1:02d}. {feature_names[idx]} — Score = {relief_scores[idx]:.4f}")
+
+    # Retorna as 3 melhores features
+    top3_fish = idx_fisher[:3]
+    top3_rel = idx_relief[:3]
+    # Retorna as 10 melhores features
+    top10_fish = idx_fisher[:10]
+    top10_rel = idx_relief[:10]
+
+    return top3_fish, top3_rel, top10_fish, top10_rel
+
+## ------------ EXERCÍCIO 4.6 ------------ ##
+top3_fish, top3_rel, top10_fish, top10_rel = selecionar_features_fisher_reliefF(X_total, y_total, feature_names, k = 10)
+
+## ------------ EXERCÍCIO 4.6.1 ------------ ##
+def obter_features_selecionadas_numInstante(feature_set, indices_melhores, instante):
+    # Seleção das colunas correspondentes às 10 melhores features
+    vetor_reduzido = feature_set[instante, indices_melhores]
+    return vetor_reduzido
+
+vetor_fisher = obter_features_selecionadas_numInstante(X_total, top10_fish, instante = 1)
+vetor_relief = obter_features_selecionadas_numInstante(X_total, top10_rel, instante = 1)
+
+
+def plot_fisher_relief_features_3D(X, y, fisher_idx, relief_idx):
+    """
+    Cria dois gráficos 3D com as três melhores features
+    segundo Fisher Score e ReliefF, cada atividade com uma cor diferente.
+    """
+
+    fig = plt.figure(figsize = (16, 7))
+
+    # -- Gráfico Fisher 3D -- #
+    ax1 = fig.add_subplot(1, 2, 1, projection = '3d')
+    sc1 = ax1.scatter(X[:, fisher_idx[0]], X[:, fisher_idx[1]], X[:, fisher_idx[2]],
+                      c = y, cmap = 'tab20', s = 20, alpha = 0.8, edgecolors = 'none')
+    ax1.set_title(f'Fisher Score — Features {fisher_idx}', fontname = 'Trebuchet MS', fontsize = 16, fontweight = 'bold')
+    ax1.set_xlabel(f'Feature {fisher_idx[0]}')
+    ax1.set_ylabel(f'Feature {fisher_idx[1]}')
+    ax1.set_zlabel(f'Feature {fisher_idx[2]}')
+
+    # -- Gráfico ReliefF 3D -- #
+    ax2 = fig.add_subplot(1, 2, 2, projection = '3d')
+    sc2 = ax2.scatter(X[:, relief_idx[0]], X[:, relief_idx[1]], X[:, relief_idx[2]],
+                      c = y, cmap = 'tab20', s = 20, alpha = 0.8, edgecolors = 'none')
+    ax2.set_title(f'ReliefF — Features {relief_idx}', fontname = 'Trebuchet MS', fontsize = 16, fontweight = 'bold')
+    ax2.set_xlabel(f'Feature {relief_idx[0]}')
+    ax2.set_ylabel(f'Feature {relief_idx[1]}')
+    ax2.set_zlabel(f'Feature {relief_idx[2]}')
+
+    # Barra de cores
+    cbar = fig.colorbar(sc2, ax = [ax1, ax2], fraction = 0.02, pad = 0.04)
+    cbar.set_label('Atividade', rotation = 270, labelpad = 15)
+
+    plt.suptitle('Comparação das Features Selecionadas em 3D (Fisher vs ReliefF)', fontsize = 22, fontweight = 'bold', fontname = 'Trebuchet MS', color = '#c00000')
+    plt.show()
+
+plot_fisher_relief_features_3D(X_total, y_total, top3_fish, top3_rel)

@@ -21,6 +21,7 @@ from sklearn.decomposition import PCA
 from skrebate import ReliefF
 from sklearn.feature_selection import f_classif  
 import matplotlib.patches as mpatches
+from sklearn.model_selection import train_test_split
 
 ## ------------ EXERCÍCIO 2 ----------- ##
 ## -- DADOS DE TODOS OS PARTICIPANTES NUMA MATRIZ -- ##
@@ -186,3 +187,11 @@ def plot_amostras_2D(X, y, atividade, n_sinteticas, k_vizinhos, participante = N
     plt.show()
 
 plot_amostras_2D(X_total, y_total, atividade = 4, n_sinteticas = 3, k_vizinhos = 5, participante = 3)
+
+# dividir em treino e teste
+X_train, X_test, y_train, y_test = train_test_split(X_total, y_total, test_size = 0.2, random_state = 42, stratify = y_total)
+
+# dividir treino em treino e validação
+X_train, X_validation, y_train, y_validation = train_test_split(X_train, y_train, test_size = 0.60, stratify = y_train) 
+
+def 
